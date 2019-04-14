@@ -13,7 +13,7 @@ library(shiny)
 library(shinythemes)
 library(tidyverse)
 
-# helper functions
+# helper functions -------------------------------------------------------------
 rpe_to_prop <- function(rpe, reps) {
     # this puts everything in relation to an RPE of 10
     effective_reps <- 10 - rpe + reps
@@ -26,7 +26,18 @@ estimate_1rm <- function(weight, rpe, reps) {
     weight / rpe_to_prop(rpe, reps)
 }
 
-# load data from datbase
+rpe_weight <- function(e1rm, rpe, reps, round=FALSE) {
+    # convert 1-rep max to weight at a given RPE
+    weight <- e1rm * rpe_to_prop(rpe, reps)
+    if (round) {
+        # round to the nearest 5 pounds
+        round(weight / 5) * 5
+    } else {
+        weight
+    }
+}
+
+# load data from datbase -------------------------------------------------------
 sheet_key <- "1AWA6Zq_BG2gYPwGFpUC-M-4YDoA58CMDANWvC4qoZ3A"
 gs_auth()
 str_log <- gs_key(sheet_key) %>% 
@@ -38,7 +49,7 @@ str_log <- gs_key(sheet_key) %>%
         e1rm = pmap_dbl(list(weight, rpe, reps), estimate_1rm)
     )
 
-# Define UI for application that draws a histogram
+# user interface ---------------------------------------------------------------
 ui <- navbarPage(
     title = "Strength Training Log",
     theme = shinythemes::shinytheme("yeti"),
@@ -55,10 +66,31 @@ ui <- navbarPage(
                 plotOutput("progress_plot")
             )
         )
+    ),
+    tabPanel(
+        "Training Weight",
+        fluidRow(
+            plotOutput("estimated_1rm")
+        ),
+        fluidRow(
+            column(
+                2,
+                selectInput(
+                    "reps",
+                    "reps",
+                    choices = 1:12,
+                    selected = 5
+                )
+            ),
+            column(
+                10,
+                tableOutput("training_weight")
+            )
+        )
     )
 )
     
-# Define server logic required to draw a histogram
+# server -----------------------------------------------------------------------
 server <- function(input, output) {
    output$movement_choices <- renderUI({
        movements <- unique(str_log$movement)
@@ -80,8 +112,46 @@ server <- function(input, output) {
                labs(title = "Estimated 1 rep max", y = "pounds")
        
    })
+   
+   output$estimated_1rm <- renderPlot({
+       # use the last three weeks to estimate current 1-rep max
+       e1rm_3weeks <- str_log %>% 
+           filter(date > today() - ddays(21),
+                  variation == "conventional")
+       e1rm_estimates <- e1rm_3weeks %>% 
+           group_by(movement) %>% 
+           summarise(estimate = mean(e1rm))
+       
+       # show estimated current 1-rep max
+       ggplot(e1rm_3weeks, aes(x = fct_reorder(movement, e1rm), y = e1rm)) +
+           geom_point(alpha = 0.5) +
+           geom_label(data = e1rm_estimates, 
+                      aes(x = fct_reorder(movement, estimate), 
+                          y = estimate, 
+                          label = round(estimate, 0)
+                      ),
+                      nudge_x = 0.2) +
+           labs(x = "movement", y = "pounds", title = "3 week estimated 1 rep max") +
+           theme_minimal() 
+   })
+   
+   output$training_weight <- renderTable({
+       # use the last three weeks to estimate current 1-rep max
+       e1rm_3weeks <- str_log %>% 
+           filter(date > today() - ddays(21),
+                  variation == "conventional")
+       e1rm_estimates <- e1rm_3weeks %>% 
+           group_by(movement) %>% 
+           summarise(estimate = mean(e1rm))
+       reps <- as.integer(input$reps)
+       e1rm_estimates %>% 
+           mutate(rpe6 = rpe_weight(estimate, 6, reps, TRUE),
+                  rpe7 = rpe_weight(estimate, 7, reps, TRUE),
+                  rpe8 = rpe_weight(estimate, 8, reps, TRUE),
+                  rpe9 = rpe_weight(estimate, 9, reps, TRUE))
+   }, digits = 0)
 }
 
-# Run the application 
+# Run the application ----------------------------------------------------------
 shinyApp(ui = ui, server = server)
 
