@@ -1,12 +1,3 @@
-#
-# This is a Shiny web application. You can run the application by clicking
-# the 'Run App' button above.
-#
-# Find out more about building applications with Shiny here:
-#
-#    http://shiny.rstudio.com/
-#
-
 library(googlesheets)
 library(lubridate)
 library(shiny)
@@ -105,6 +96,8 @@ server <- function(input, output) {
    output$progress_plot <- renderPlot({
        str_log %>% 
            filter(movement %in% input$movement_filter) %>%
+           group_by(date, movement) %>% 
+           summarise(e1rm = mean(e1rm)) %>% 
            # plot estimated 1-rep max over time (progress)
            ggplot(aes(date, e1rm, color = movement)) +
                geom_line() +
