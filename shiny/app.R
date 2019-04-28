@@ -61,9 +61,10 @@ ui <- navbarPage(
     tabPanel(
         "Training Weight",
         fluidRow(
-            plotOutput("estimated_1rm")
-        ),
-        fluidRow(
+            column(
+                10,
+                tableOutput("training_weight")
+            ),
             column(
                 2,
                 selectInput(
@@ -72,11 +73,10 @@ ui <- navbarPage(
                     choices = 1:12,
                     selected = 5
                 )
-            ),
-            column(
-                10,
-                tableOutput("training_weight")
             )
+        ),
+        fluidRow(
+            plotOutput("estimated_1rm")
         )
     )
 )
