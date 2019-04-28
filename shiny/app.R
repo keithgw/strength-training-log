@@ -37,7 +37,11 @@ str_log <- gs_key(sheet_key) %>%
         # if no date is given, use the date of entry
         date = ifelse(is.na(date), as_date(mdy_hms(Timestamp)), mdy(date)) %>% as_date(), 
         # calculate estimated 1-rep max for each session
-        e1rm = pmap_dbl(list(weight, rpe, reps), estimate_1rm)
+        e1rm = pmap_dbl(list(weight, rpe, reps), estimate_1rm),
+        units = ifelse(is.na(units), "lb", units),
+        wk = lubridate::week(date),
+        volume = reps * sets,
+        tonnage = volume * weight
     )
 
 # user interface ---------------------------------------------------------------
@@ -49,12 +53,12 @@ ui <- navbarPage(
         "Progress",
         fluidRow(
             column(
-                2,
-                uiOutput("movement_choices")
-            ),
-            column(
                 10,
                 plotOutput("progress_plot")
+            ),
+            column(
+                2,
+                uiOutput("movement_choices")
             )
         )
     ),
@@ -63,6 +67,7 @@ ui <- navbarPage(
         fluidRow(
             column(
                 10,
+                "Estimated Training Weight",
                 tableOutput("training_weight")
             ),
             column(
@@ -77,6 +82,10 @@ ui <- navbarPage(
         ),
         fluidRow(
             plotOutput("estimated_1rm")
+        ),
+        fluidRow(
+            "Last Week's Weights",
+            tableOutput("last_week")
         )
     )
 )
@@ -143,6 +152,15 @@ server <- function(input, output) {
                   rpe8 = rpe_weight(estimate, 8, reps, TRUE),
                   rpe9 = rpe_weight(estimate, 9, reps, TRUE))
    }, digits = 0)
+   
+   output$last_week <- renderTable({
+       str_log %>% 
+           # filter to last week
+           filter(wk == lubridate::week(today()) - 1) %>% 
+           group_by(movement, variation, reps, rpe) %>% 
+           summarise(wt = max(weight)) %>% 
+           spread(key = rpe, value = wt, sep = "")
+   }, digits = 0, na = "")
 }
 
 # Run the application ----------------------------------------------------------

@@ -75,3 +75,52 @@ e1rm_estimates %>%
 #     summarise(mean_rpe = mean(rpe)) %>% 
 #     ggplot(aes(date, mean_rpe, color = movement)) +
 #         geom_line()
+
+## Updates ---------------------------------------------------------------------
+
+# volume by exercise
+str_log <- str_log %>% 
+    mutate(
+        wk = lubridate::week(date)
+        , volume = reps * sets
+        , tonnage = volume * weight
+    ) 
+
+weekly_summary <- str_log %>% 
+    group_by(wk, movement) %>% 
+    summarise(
+        vol = sum(volume)
+        , ton = sum(tonnage)
+        , max_rep = max(weight)
+        , e1rm = mean(e1rm)
+    )
+
+# intensity, maybe?
+weekly_tidy <- weekly_summary %>% 
+    gather("metric", "value", vol:e1rm)
+
+weekly_tidy %>% 
+    filter(metric %in% c("max_rep", "e1rm")) %>% 
+    ggplot(aes(wk, value, color = metric)) +
+    geom_line() +
+    facet_wrap(~movement)
+
+# eh, don't love this
+min_max <- weekly_tidy %>% 
+    group_by(movement, metric) %>% 
+    summarise(min_val = min(value), max_val = max(value))
+
+weekly_tidy %>% 
+    filter(metric %in% c("vol", "ton")) %>%
+    inner_join(min_max) %>% 
+    mutate(normalized = (value - min_val) / (max_val - min_val)) %>% 
+    ggplot(aes(wk, normalized, color = metric)) + 
+    geom_line() +
+    facet_wrap(~movement)
+
+# last week's weights  
+str_log %>% 
+    filter(wk == lubridate::week(today()) - 1) %>% 
+    group_by(movement, variation, reps, rpe) %>% 
+    summarise(wt = max(weight)) %>% 
+    spread(key = rpe, value = wt, sep = "")
