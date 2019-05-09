@@ -4,6 +4,9 @@ library(shiny)
 library(shinythemes)
 library(tidyverse)
 
+# constants --------------------------------------------------------------------
+kg_lb <- 2.20462
+
 # helper functions -------------------------------------------------------------
 rpe_to_prop <- function(rpe, reps) {
     # this puts everything in relation to an RPE of 10
@@ -17,12 +20,14 @@ estimate_1rm <- function(weight, rpe, reps) {
     weight / rpe_to_prop(rpe, reps)
 }
 
-rpe_weight <- function(e1rm, rpe, reps, round=FALSE) {
+rpe_weight <- function(e1rm, rpe, reps, weight_units=c("lb", "kg"), round=FALSE) {
+    weight_units <- match.arg(weight_units)
+    round_unit <- ifelse(weight_units == "lb", 5, 2)
     # convert 1-rep max to weight at a given RPE
     weight <- e1rm * rpe_to_prop(rpe, reps)
     if (round) {
         # round to the nearest 5 pounds
-        round(weight / 5) * 5
+        round(weight / round_unit) * round_unit
     } else {
         weight
     }
@@ -36,12 +41,12 @@ str_log <- gs_key(sheet_key) %>%
     mutate(
         # if no date is given, use the date of entry
         date = ifelse(is.na(date), as_date(mdy_hms(Timestamp)), mdy(date)) %>% as_date(), 
-        # calculate estimated 1-rep max for each session
-        e1rm = pmap_dbl(list(weight, rpe, reps), estimate_1rm),
         units = ifelse(is.na(units), "lb", units),
         wk = lubridate::week(date),
         volume = reps * sets,
-        tonnage = volume * weight
+        tonnage = volume * weight,
+        pounds = ifelse(units == "lb", weight, weight * kg_lb),
+        kilos = ifelse(units == "kg", weight, weight / kg_lb)
     )
 
 # user interface ---------------------------------------------------------------
@@ -58,7 +63,13 @@ ui <- navbarPage(
             ),
             column(
                 2,
-                uiOutput("movement_choices")
+                uiOutput("movement_choices"),
+                radioButtons(
+                    inputId = "units",
+                    label = "units",
+                    choices = c("lb", "kg"),
+                    selected = "kg"
+                )
             )
         )
     ),
@@ -102,63 +113,96 @@ server <- function(input, output) {
        )
    })
    
+   progress_data <- reactive({
+       if (input$units == "lb") {
+           estimated_data <- str_log %>%
+               mutate(
+                   # calculate estimated 1-rep max for each session
+                   e1rm = pmap_dbl(list(pounds, rpe, reps), estimate_1rm)
+               )
+       } else {
+           estimated_data <- str_log %>%
+               mutate(
+                   # calculate estimated 1-rep max for each session
+                   e1rm = pmap_dbl(list(kilos, rpe, reps), estimate_1rm)
+               )
+       }
+       estimated_data %>%
+           group_by(date, movement) %>%
+           summarise(e1rm = mean(e1rm))
+   })
+   
    output$progress_plot <- renderPlot({
-       str_log %>% 
+       progress_data() %>%
            filter(movement %in% input$movement_filter) %>%
-           group_by(date, movement) %>% 
-           summarise(e1rm = mean(e1rm)) %>% 
            # plot estimated 1-rep max over time (progress)
            ggplot(aes(date, e1rm, color = movement)) +
                geom_line() +
                theme_minimal() +
-               labs(title = "Estimated 1 rep max", y = "pounds")
+               labs(title = "Estimated 1 rep max", y = input$units)
        
+   })
+   
+   three_weeks <- reactive({
+       # use the last three weeks to estimate current 1-rep max
+       last3weeks <- str_log %>%
+           filter(date > today() - ddays(21),
+                  variation == "conventional")
+       if (input$units == "lb") {
+           e1rm_3weeks <- last3weeks %>%
+               mutate(
+                   # calculate estimated 1-rep max for each session
+                   e1rm = pmap_dbl(list(pounds, rpe, reps), estimate_1rm)
+               )
+       } else {
+           e1rm_3weeks <- last3weeks %>%
+               mutate(
+                   # calculate estimated 1-rep max for each session
+                   e1rm = pmap_dbl(list(kilos, rpe, reps), estimate_1rm)
+               )
+       }
+       return(e1rm_3weeks)
    })
    
    output$estimated_1rm <- renderPlot({
        # use the last three weeks to estimate current 1-rep max
-       e1rm_3weeks <- str_log %>% 
-           filter(date > today() - ddays(21),
-                  variation == "conventional")
-       e1rm_estimates <- e1rm_3weeks %>% 
-           group_by(movement) %>% 
+       e1rm_3weeks <- three_weeks()
+       e1rm_estimates <- e1rm_3weeks %>%
+           group_by(movement) %>%
            summarise(estimate = mean(e1rm))
-       
        # show estimated current 1-rep max
        ggplot(e1rm_3weeks, aes(x = fct_reorder(movement, e1rm), y = e1rm)) +
            geom_point(alpha = 0.5) +
-           geom_label(data = e1rm_estimates, 
-                      aes(x = fct_reorder(movement, estimate), 
-                          y = estimate, 
+           geom_label(data = e1rm_estimates,
+                      aes(x = fct_reorder(movement, estimate),
+                          y = estimate,
                           label = round(estimate, 0)
                       ),
                       nudge_x = 0.2) +
-           labs(x = "movement", y = "pounds", title = "3 week estimated 1 rep max") +
-           theme_minimal() 
+           labs(x = "movement", y = input$units, title = "3 week estimated 1 rep max") +
+           theme_minimal()
    })
    
    output$training_weight <- renderTable({
        # use the last three weeks to estimate current 1-rep max
-       e1rm_3weeks <- str_log %>% 
-           filter(date > today() - ddays(21),
-                  variation == "conventional")
-       e1rm_estimates <- e1rm_3weeks %>% 
-           group_by(movement) %>% 
+       e1rm_3weeks <- three_weeks()
+       e1rm_estimates <- e1rm_3weeks %>%
+           group_by(movement) %>%
            summarise(estimate = mean(e1rm))
        reps <- as.integer(input$reps)
-       e1rm_estimates %>% 
-           mutate(rpe6 = rpe_weight(estimate, 6, reps, TRUE),
-                  rpe7 = rpe_weight(estimate, 7, reps, TRUE),
-                  rpe8 = rpe_weight(estimate, 8, reps, TRUE),
-                  rpe9 = rpe_weight(estimate, 9, reps, TRUE))
+       e1rm_estimates %>%
+           mutate(rpe6 = rpe_weight(estimate, 6, reps, input$units, round = TRUE),
+                  rpe7 = rpe_weight(estimate, 7, reps, input$units, round = TRUE),
+                  rpe8 = rpe_weight(estimate, 8, reps, input$units, round = TRUE),
+                  rpe9 = rpe_weight(estimate, 9, reps, input$units, round = TRUE))
    }, digits = 0)
    
    output$last_week <- renderTable({
-       str_log %>% 
+       str_log %>%
            # filter to last week
-           filter(wk == lubridate::week(today()) - 1) %>% 
-           group_by(movement, variation, reps, rpe) %>% 
-           summarise(wt = max(weight)) %>% 
+           filter(wk == lubridate::week(today()) - 1) %>%
+           group_by(movement, variation, reps, rpe) %>%
+           summarise(wt = ifelse(input$units == "lb", max(pounds), max(kilos))) %>%
            spread(key = rpe, value = wt, sep = "")
    }, digits = 0, na = "")
 }
